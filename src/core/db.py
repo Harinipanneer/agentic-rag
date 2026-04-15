@@ -48,9 +48,8 @@ _embeddings_model = GoogleGenerativeAIEmbeddings(
 
 def get_sql_database() -> SQLDatabase:
     """
-    Return a LangChain SQLDatabase connected to the NorthStar Bank DB.
+    Return a LangChain SQLDatabase connected to the Bank DB.
 
-    Updated for Capstone Project BFSI-CC-003.
     Includes tables for customers, cards, transactions, and billing.
     """
     db_url = os.getenv("AGENTIC_RAG_DB_URL")
@@ -147,14 +146,14 @@ def store_chunks(chunks: list[dict], doc_id: str) -> int:
     contents = [c["content"] for c in chunks]
     print(" Generating embeddings...")
 
-    # 🔥 FIX: Use embed_query instead of embed_documents
+    #  FIX: Use embed_query instead of embed_documents
     all_embeddings = []
     for idx, text in enumerate(contents):
         try:
             emb = _embeddings_model.embed_query(text)
             all_embeddings.append(emb)
         except Exception as e:
-            print(f"❌ Embedding failed for chunk {idx}: {e}")
+            print(f" Embedding failed for chunk {idx}: {e}")
             all_embeddings.append(None)
 
     print(f" Embeddings ready: {len([e for e in all_embeddings if e is not None])}")
@@ -241,7 +240,7 @@ def store_chunks(chunks: list[dict], doc_id: str) -> int:
                     rows_inserted += 1
 
                 except Exception as e:
-                    print(f"❌ Failed inserting chunk {idx}: {e}")
+                    print(f" Failed inserting chunk {idx}: {e}")
                     continue
 
         conn.commit()

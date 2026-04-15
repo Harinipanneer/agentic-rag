@@ -4,16 +4,16 @@ from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
-# ✅ VLM
+# VLM
 import google.generativeai as genai
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# ✅ Image folder
+# Image folder
 IMAGE_DIR = "data/images"
 os.makedirs(IMAGE_DIR, exist_ok=True)
 
 
-# 🔥 VLM function
+#  VLM function
 def generate_image_description(pil_img):
     try:
         model = genai.GenerativeModel("gemini-3.1-pro-preview")
@@ -66,7 +66,7 @@ def parse_document(file_path: str) -> list[dict]:
             b = prov[0].bbox
             position = {"l": b.l, "t": b.t, "r": b.r, "b": b.b}
 
-        # ✅ metadata WITHOUT image_path
+        #  metadata WITHOUT image_path
         def _make_metadata(content_type: str, element_type: str):
             return {
                 "content_type": content_type,
@@ -124,7 +124,7 @@ def parse_document(file_path: str) -> list[dict]:
                     "image_path": None
                 })
 
-        # ───────── 🔥 IMAGES ─────────
+        #  IMAGES
         elif "picture" in label or "figure" in label or label == "chart":
             caption = getattr(node, "text", "") or ""
             description = None
@@ -140,13 +140,13 @@ def parse_document(file_path: str) -> list[dict]:
                     pil_img = getattr(node.image, "pil_image", None)
 
                 if pil_img:
-                    # ✅ Save image locally
+                    #  Save image locally
                     filename = f"{source_file}p{page_no}{len(parsed_chunks)}.png"
                     image_path = os.path.join(IMAGE_DIR, filename)
 
                     pil_img.save(image_path, format="PNG")
 
-                    # ✅ Generate description
+                    #  Generate description
                     description = generate_image_description(pil_img)
 
             except Exception as e:
@@ -158,7 +158,7 @@ def parse_document(file_path: str) -> list[dict]:
                 "content": content,
                 "content_type": "image",
                 "metadata": _make_metadata("image", "picture"),
-                "image_path": image_path   # ✅ separate column
+                "image_path": image_path   #  separate column
             })
 
         # ───────── TEXT ─────────

@@ -10,17 +10,17 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     query: str
     answer: str
-    policy_citations: Optional[str] = None
+    citation: Optional[str] = None
     page_no: Optional[str] = None
     document_name: Optional[str] = None
     sql_query_executed: Optional[str] = None
-    source_chunks: Optional[List[str]] = None # MUST ADD THIS
+    source_chunks: Optional[List[str]] = None
 
 class AIResponse(BaseModel):
     query: str
     answer: str
-    policy_citations: str
+    citation: str
     page_no: str
     document_name: str
     sql_query_executed: Optional[str] = None
-    source_chunks: Optional[List[str]] = None # MUST ADD THIS
+    source_chunks: Optional[List[str]] = None 

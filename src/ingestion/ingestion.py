@@ -61,11 +61,11 @@ def run_ingestion(file_path: str) -> dict:
     Returns:
         Dict with "status", "doc_id", and "chunks_ingested" count.
     """
-    print("\n🚀 ===== INGESTION STARTED =====")
+    print("\n ===== INGESTION STARTED =====")
 
     path = pathlib.Path(file_path).resolve()
 
-# 🔥 NEW CHECK
+
     if document_exists(path.name):
         print(" Document already exists. Skipping ingestion.")
     
