@@ -177,13 +177,15 @@ def nl2sql_node(state: RAGState) -> RAGState:
         
         IMPORTANT:
         IF THE USER ASKS ABOUT FEE WAIVERS, LIMITS, OR ELIGIBILITY: You MUST JOIN the `cards` table to retrieve the card variant/tier alongside the aggregated spend. The AI needs the tier to know the target.
+        DO NOT perform multiplication or division calculations (like points to rupees) inside the SQL query. 
+        Return the RAW data (e.g., total reward points) and let the Assistant do the math.
         If the question asks for "most", "highest", "maximum", "top", or similar superlatives,
         and multiple rows may share the same highest value,
         DO NOT use ORDER BY ... LIMIT 1.
         Instead, return ALL rows that tie for the highest value by comparing against MAX(...).
         It the user mentions which one is highest or which one is most then retrieve one.
         Spend' refers only to 'purchase' txn_type. Exclude payments/fees.
-        Net Spend' = purchases minus refunds.
+        NET SPEND MUST USE: SUM(CASE WHEN txn_type='purchase' THEN amount WHEN txn_type='refund' THEN -amount ELSE 0 END) AS net_spend.
         Use the merchant_name and category_name fields for descriptive summaries.
         Return ONLY the raw SQL. No markdown fences.
     
@@ -433,6 +435,7 @@ def generate_node(state: RAGState) -> RAGState:
         3. Ensure the text is airy and easy to read, not a dense block.
         4. Provide a clear, natural-sounding answer using the transaction data and banking guide context provided.
         5. Ensure you handle currency and credit limit terminology appropriately for the BFSI domain.
+        6. Avoid "Based on" or" provided context tells "sentences.
 
         CITE SOURCES STRICTLY:
         - Use 'page_no' ONLY for the page number found in the tags.
