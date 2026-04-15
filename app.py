@@ -4,10 +4,9 @@ import requests
 # ==========================================
 # CONFIGURATION
 # ==========================================
-# Update this to match your FastAPI server address and prefix.
 API_URL = "http://localhost:8000/api/v1"
 
-st.set_page_config(page_title="Agentic RAG Assistant", page_icon="", layout="wide")
+st.set_page_config(page_title="Agentic RAG Assistant", page_icon="🤖", layout="wide")
 
 # ==========================================
 # SIDEBAR / TOGGLE
@@ -20,7 +19,7 @@ app_mode = st.sidebar.radio("Select Mode", ["User Mode", "Admin Mode (Upload)"])
 # ADMIN MODE: FILE UPLOAD
 # ==========================================
 if app_mode == "Admin Mode (Upload)":
-    st.title("Admin: Document Ingestion")
+    st.title("🛡️ Admin: Document Ingestion")
     st.markdown("Upload multiple PDF documents to update the knowledge base.")
 
     uploaded_files = st.file_uploader(
@@ -35,7 +34,6 @@ if app_mode == "Admin Mode (Upload)":
         else:
             with st.spinner("Uploading and processing documents... This may take a while."):
                 try:
-                    # Format files for the 'requests' library
                     files_payload = [
                         ("files", (file.name, file.getvalue(), "application/pdf")) 
                         for file in uploaded_files
@@ -56,7 +54,6 @@ if app_mode == "Admin Mode (Upload)":
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
 
-
 # ==========================================
 # USER MODE: QUERY
 # ==========================================
@@ -64,70 +61,81 @@ elif app_mode == "User Mode":
     st.title("🤖 AI RAG Assistant")
     st.markdown("Ask questions about financial data, policies.")
 
-    # Initialize chat history in session state
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Display chat messages from history on app rerun
+    # --- CHAT HISTORY LOOP ---
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-            # Display metadata if it's an AI response
+            
             if message["role"] == "assistant" and "metadata" in message:
                 with st.expander("Sources & Metadata", expanded=False):
                     meta = message["metadata"]
-                    if meta.get("SQL Query Executed"):
-                        st.markdown("**Generated SQL:**")
-                        st.code(meta["SQL Query Executed"], language="sql")
                     
+                    # Clean layout for the main metadata
                     st.markdown(f"**📄 Document:** {meta.get('Document Name') or 'N/A'}")
                     st.markdown(f"**📑 Page(s):** {meta.get('Page No') or 'N/A'}")
                     st.markdown(f"**🔖 Citation:** {meta.get('Policy Citations') or 'N/A'}")
-                    st.markdown(f"** SQL Query Executed:** {meta.get('SQL Query Executed')or 'N/A'}")
+                    
+                    # Show SQL Query Executed
+                    if meta.get("SQL Query Executed"):
+                        st.markdown("**💻 SQL Query Executed:**")
+                        st.code(meta["SQL Query Executed"], language="sql")
+                    else:
+                        st.markdown("**💻 SQL Query Executed:** N/A")
+                    
+                    # Vertical Raw Chunks Display
+                    if meta.get("Source Chunks"):
+                        st.markdown("---")
+                        st.markdown("**🔍 Retrieved Context (Raw Chunks):**")
+                        raw_text = "\n\n".join([f"[Chunk {i+1}]\n{chunk}" for i, chunk in enumerate(meta["Source Chunks"])])
+                        st.code(raw_text, language="text")
 
-    # React to user input
+    # --- LIVE QUERY LOOP ---
     if prompt := st.chat_input("Ask a question..."):
-        # Display user message in chat message container
         st.chat_message("user").markdown(prompt)
-        # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
+
 
         with st.spinner("Thinking..."):
             try:
-                # Prepare the request payload
                 payload = {"query": prompt}
-                
                 response = requests.post(f"{API_URL}/query", json=payload)
                 
                 if response.status_code == 200:
                     data = response.json()
                     answer = data.get("answer", "No answer provided.")
                     
-                    # Extract metadata mapping to your QueryResponse schema
                     metadata = {
                         "Document Name": data.get("document_name"),
                         "Page No": data.get("page_no"),
                         "Policy Citations": data.get("policy_citations"),
-                        "SQL Query Executed": data.get("sql_query_executed")
+                        "SQL Query Executed": data.get("sql_query_executed"),
+                        "Source Chunks": data.get("source_chunks") 
                     }
                     
-                    # Display assistant response
                     with st.chat_message("assistant"):
                         st.markdown(answer)
+                        
                         with st.expander("Sources & Metadata", expanded=False):
                             
-                            # Show SQL if present
-                            if metadata["SQL Query Executed"]:
-                                st.markdown("**Generated SQL:**")
-                                st.code(metadata["SQL Query Executed"], language="sql")
+                            st.markdown(f"**📄 Document:** {metadata.get('Document Name') or 'N/A'}")
+                            st.markdown(f"**📑 Page(s):** {metadata.get('Page No') or 'N/A'}")
+                            st.markdown(f"**🔖 Citation:** {metadata.get('Policy Citations') or 'N/A'}")
                             
-                            # Show Document sources cleanly (No more JSON!)
-                            st.markdown(f"**📄 Document:** {metadata['Document Name'] or 'N/A'}")
-                            st.markdown(f"**📑 Page(s):** {metadata['Page No'] or 'N/A'}")
-                            st.markdown(f"**🔖 Citation:** {metadata['Policy Citations'] or 'N/A'}")
-                            st.markdown(f"** SQL Query Executed:** {metadata['SQL Query Executed'] or 'N/A'}")
+                            if metadata.get("SQL Query Executed"):
+                                st.markdown("**💻 SQL Query Executed:**")
+                                st.code(metadata["SQL Query Executed"], language="sql")
+                            else:
+                                st.markdown("**💻 SQL Query Executed:** N/A")
+                            
+                            if metadata.get("Source Chunks"):
+                                st.markdown("---")
+                                st.markdown("**🔍 Retrieved Context (Raw Chunks):**")
+                                raw_text = "\n\n".join([f"[Chunk {i+1}]\n{chunk}" for i, chunk in enumerate(metadata["Source Chunks"])])
+                                st.code(raw_text, language="text")
 
-                    # Add assistant response to chat history
                     st.session_state.messages.append({
                         "role": "assistant", 
                         "content": answer,

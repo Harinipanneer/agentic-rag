@@ -1,12 +1,11 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 
 class QueryRequest(BaseModel):
     query: str
-    k: int = 5
+    k: int = 20
     chunk_type: Optional[str] = None
-
 
 class QueryResponse(BaseModel):
     query: str
@@ -15,7 +14,7 @@ class QueryResponse(BaseModel):
     page_no: Optional[str] = None
     document_name: Optional[str] = None
     sql_query_executed: Optional[str] = None
-
+    source_chunks: Optional[List[str]] = None # MUST ADD THIS
 
 class AIResponse(BaseModel):
     query: str
@@ -24,4 +23,4 @@ class AIResponse(BaseModel):
     page_no: str
     document_name: str
     sql_query_executed: Optional[str] = None
-    
+    source_chunks: Optional[List[str]] = None # MUST ADD THIS

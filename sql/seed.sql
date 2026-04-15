@@ -1,276 +1,267 @@
--- =============================================================================
--- sql/seed.sql — Bootstrap agentic_rag_db with sample e-commerce schema
---
--- Run as a PostgreSQL superuser:
---   psql -U postgres -f sql/seed.sql
---
--- What this script does:
---   1. Creates the agentic_rag_db database.
---   2. Creates a read-only role (rag_readonly) for the NL2SQL agent.
---   3. Defines the schema: categories, products, orders, order_items.
---   4. Seeds realistic sample data.
---   5. Grants SELECT-only privileges to rag_readonly.
---   6. Enforces read-only at the session level for rag_readonly.
--- =============================================================================
 
--- ── Step 1: Create DB (run connected to the default 'postgres' database) ─────
+-- ============================================================
+-- NorthStar Bank — Credit Card Spend Summarizer
+-- Seed Data | Capstone Project BFSI-CC-003
+-- PostgreSQL 16+
+-- ============================================================
 
--- Drop and recreate for a clean slate (comment out in production)
-DROP DATABASE IF EXISTS agentic_rag_db;
-CREATE DATABASE agentic_rag_db;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- ── Step 2: Create read-only user ────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────
+-- 1. SCHEMA
+-- ─────────────────────────────────────────────────────────────
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'rag_readonly') THEN
-        CREATE USER rag_readonly WITH LOGIN ENCRYPTED PASSWORD 'rag_readonly_pass';
-    END IF;
-END
-$$;
-
-GRANT CONNECT ON DATABASE agentic_rag_db TO rag_readonly;
-
--- ── Switch to agentic_rag_db ──────────────────────────────────────────────────
-
-\c agentic_rag_db
-
--- ── Step 3: Schema ────────────────────────────────────────────────────────────
-
-GRANT USAGE ON SCHEMA public TO rag_readonly;
-
--- -----------------------------------------------------------------------------
--- categories
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS categories (
-    id          SERIAL PRIMARY KEY,
-    name        VARCHAR(100) NOT NULL,
-    description TEXT,
-    created_at  TIMESTAMPTZ  DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS customers (
+    customer_id     VARCHAR(20)  PRIMARY KEY,
+    full_name       VARCHAR(100) NOT NULL,
+    email           VARCHAR(100),
+    mobile          VARCHAR(15),
+    dob             DATE,
+    kyc_status      VARCHAR(20)  DEFAULT 'verified',
+    created_at      TIMESTAMP    DEFAULT NOW()
 );
 
--- -----------------------------------------------------------------------------
--- products
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS products (
-    id             SERIAL PRIMARY KEY,
-    name           VARCHAR(200)   NOT NULL,
-    category_id    INT            REFERENCES categories(id),
-    price          NUMERIC(10, 2) NOT NULL,
-    stock_quantity INT            DEFAULT 0,
-    description    TEXT,
-    is_active      BOOLEAN        DEFAULT TRUE,
-    created_at     TIMESTAMPTZ    DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS credit_cards (
+    card_id         VARCHAR(20)  PRIMARY KEY,
+    customer_id     VARCHAR(20)  REFERENCES customers(customer_id),
+    card_variant    VARCHAR(30)  NOT NULL,
+    credit_limit    NUMERIC(15,2),
+    available_limit NUMERIC(15,2),
+    cash_limit      NUMERIC(15,2),
+    outstanding_amt NUMERIC(15,2) DEFAULT 0,
+    statement_date  INT,           -- day of month e.g. 25
+    due_date        INT,           -- day of month e.g. 15 (next month)
+    min_due         NUMERIC(15,2) DEFAULT 0,
+    reward_points   INT           DEFAULT 0,
+    status          VARCHAR(20)  DEFAULT 'active',
+    issued_date     DATE,
+    created_at      TIMESTAMP    DEFAULT NOW()
 );
 
--- -----------------------------------------------------------------------------
--- orders
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS orders (
-    id             SERIAL PRIMARY KEY,
-    customer_name  VARCHAR(200)   NOT NULL,
-    customer_email VARCHAR(200),
-    total_amount   NUMERIC(10, 2),
-    status         VARCHAR(50)    DEFAULT 'pending',
-    -- status values: pending, confirmed, shipped, delivered, cancelled
-    created_at     TIMESTAMPTZ    DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS card_transactions (
+    txn_id           UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    card_id          VARCHAR(20)  REFERENCES credit_cards(card_id),
+    txn_date         DATE         NOT NULL,
+    posting_date     DATE,
+    txn_type         VARCHAR(20)  NOT NULL CHECK (txn_type IN ('purchase','cashadvance','payment','refund','fee','emi_instalment')),
+    amount           NUMERIC(15,2) NOT NULL,
+    original_currency VARCHAR(5)  DEFAULT 'INR',
+    original_amount  NUMERIC(15,2),
+    merchant_name    VARCHAR(100),
+    category_code    VARCHAR(10),
+    category_name    VARCHAR(50),
+    is_international BOOLEAN      DEFAULT FALSE,
+    is_emi           BOOLEAN      DEFAULT FALSE,
+    emi_months       INT,
+    reward_pts_earned INT         DEFAULT 0,
+    status           VARCHAR(20)  DEFAULT 'posted',  -- posted / disputed / reversed
+    created_at       TIMESTAMP    DEFAULT NOW()
 );
 
--- -----------------------------------------------------------------------------
--- order_items
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS order_items (
-    id         SERIAL PRIMARY KEY,
-    order_id   INT            REFERENCES orders(id),
-    product_id INT            REFERENCES products(id),
-    quantity   INT            NOT NULL,
-    unit_price NUMERIC(10, 2) NOT NULL
+CREATE TABLE IF NOT EXISTS reward_transactions (
+    reward_txn_id   UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    card_id         VARCHAR(20)  REFERENCES credit_cards(card_id),
+    txn_date        DATE,
+    points_earned   INT          DEFAULT 0,
+    points_redeemed INT          DEFAULT 0,
+    points_expired  INT          DEFAULT 0,
+    description     VARCHAR(200),
+    expiry_date     DATE,
+    created_at      TIMESTAMP    DEFAULT NOW()
 );
 
--- ── Step 4: Seed data ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS billing_statements (
+    statement_id    UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    card_id         VARCHAR(20)  REFERENCES credit_cards(card_id),
+    billing_month   VARCHAR(10),          -- e.g. '2026-03'
+    start_date      DATE,
+    end_date        DATE,
+    due_date        DATE,
+    opening_balance NUMERIC(15,2),
+    total_purchases NUMERIC(15,2),
+    total_payments  NUMERIC(15,2),
+    total_fees      NUMERIC(15,2),
+    total_refunds   NUMERIC(15,2),
+    closing_balance NUMERIC(15,2),
+    min_amount_due  NUMERIC(15,2),
+    reward_pts_earned INT,
+    generated_at    TIMESTAMP    DEFAULT NOW()
+);
 
--- ── Categories (7) ────────────────────────────────────────────────────────────
-INSERT INTO categories (name, description) VALUES
-    ('Electronics',     'Gadgets, consumer electronics, and accessories'),
-    ('Books',           'Fiction, non-fiction, technical, and educational books'),
-    ('Clothing',        'Men''s, women''s, and children''s apparel'),
-    ('Home & Kitchen',  'Furniture, cookware, and home décor'),
-    ('Sports & Outdoors', 'Fitness equipment, outdoor gear, and sportswear'),
-    ('Toys & Games',    'Board games, puzzles, and children''s toys'),
-    ('Health & Beauty', 'Personal care, vitamins, and wellness products');
+-- ─────────────────────────────────────────────────────────────
+-- 2. CUSTOMERS
+-- ─────────────────────────────────────────────────────────────
+INSERT INTO customers (customer_id, full_name, email, mobile, dob, kyc_status) VALUES
+('C-1001', 'James Mitchell',     'james.mitchell@email.com',     'XXXXXXX890', '1985-06-14', 'verified'),
+('C-1002', 'Sarah Thompson',     'sarah.thompson@email.com',     'XXXXXXX123', '1990-03-22', 'verified'),
+('C-1003', 'Robert Clarke',      'robert.clarke@bizmail.com',    'XXXXXXX456', '1978-11-05', 'verified'),
+('C-1004', 'Emily Watson',       'emily.watson@email.com',       'XXXXXXX789', '1995-07-30', 'verified'),
+('C-1005', 'Daniel Foster',      'daniel.foster@email.com',      'XXXXXXX321', '1988-01-18', 'verified'),
+('C-1006', 'Laura Bennett',      'laura.bennett@email.com',      'XXXXXXX654', '1992-09-09', 'verified');
 
--- ── Products (25) ─────────────────────────────────────────────────────────────
-INSERT INTO products (name, category_id, price, stock_quantity, description, is_active) VALUES
-    -- Electronics (category 1)
-    ('Wireless Noise-Cancelling Headphones',  1, 149.99,  85,  'Over-ear headphones with 30-hour battery and active noise cancellation', TRUE),
-    ('Mechanical Keyboard — TKL',             1,  89.99, 120,  'Tenkeyless mechanical keyboard with blue switches and RGB backlighting', TRUE),
-    ('4K USB-C Monitor 27"',                  1, 329.99,  40,  '27-inch 4K IPS display with USB-C 90 W power delivery', TRUE),
-    ('Smart Home Hub',                        1,  59.99,  60,  'Zigbee + Z-Wave compatible hub, works with Alexa and Google Home', TRUE),
-    ('Portable SSD 1 TB',                     1,  99.99, 200,  'NVMe portable SSD with read speeds up to 1050 MB/s', TRUE),
+-- ─────────────────────────────────────────────────────────────
+-- 3. CREDIT CARDS
+-- ─────────────────────────────────────────────────────────────
+INSERT INTO credit_cards (card_id, customer_id, card_variant, credit_limit, available_limit, cash_limit, outstanding_amt, statement_date, due_date, min_due, reward_points, issued_date) VALUES
+('CC-881001', 'C-1001', 'NorthStar Gold',      200000, 145000, 40000,  55000, 25, 15,  2750,  3420, '2021-07-01'),
+('CC-882001', 'C-1002', 'NorthStar Platinum',  500000, 420000, 100000, 80000, 25, 15,  4000,  8760, '2022-03-15'),
+('CC-883001', 'C-1005', 'NorthStar Classic',    75000,  60000,  15000, 15000, 20, 10,   750,   640, '2023-01-10'),
+('CC-884001', 'C-1003', 'NorthStar Signature',1000000, 850000, 200000,150000, 28, 18,  7500, 22100, '2024-02-01'),
+('CC-885001', 'C-1004', 'NorthStar Gold',      150000, 132000,  30000, 18000, 22, 12,   900,  1200, '2023-08-20'),
+('CC-886001', 'C-1006', 'NorthStar Classic',    50000,  45000,  10000,  5000, 15,  5,   250,   310, '2024-06-01');
 
-    -- Books (category 2)
-    ('Clean Code by Robert C. Martin',        2,  34.99, 300,  'A handbook of agile software craftsmanship', TRUE),
-    ('Designing Data-Intensive Applications', 2,  44.99, 250,  'Principles, practices, and patterns for scalable systems', TRUE),
-    ('The Pragmatic Programmer',              2,  39.99, 280,  '20th anniversary edition — your journey to mastery', TRUE),
+-- ─────────────────────────────────────────────────────────────
+-- 4. CARD TRANSACTIONS — CC-881001 (James Mitchell / Gold)
+--    Primary account for Spend Summarizer demos
+-- ─────────────────────────────────────────────────────────────
 
-    -- Clothing (category 3)
-    ('Men''s Slim-Fit Chinos',                3,  49.99, 500,  'Stretch chinos available in 12 colours, sizes 28–40', TRUE),
-    ('Women''s Running Jacket',               3,  79.99, 160,  'Lightweight wind-proof running jacket with reflective trim', TRUE),
-    ('Unisex Organic Cotton T-Shirt',         3,  24.99, 800,  '100 % GOTS-certified organic cotton, available in 8 colours', TRUE),
+-- January 2026 (billing cycle Jan 26 – Feb 25)
+INSERT INTO card_transactions (card_id, txn_date, posting_date, txn_type, amount, original_currency, original_amount, merchant_name, category_code, category_name, is_international, reward_pts_earned) VALUES
+('CC-881001','2026-01-27','2026-01-27','purchase',  3200.00,'INR', 3200.00,'Barbeque Nation',       'FOOD','Food & Dining',  FALSE, 64),
+('CC-881001','2026-01-29','2026-01-29','purchase',  4500.00,'INR', 4500.00,'BigBasket',             'GROC','Groceries',      FALSE, 45),
+('CC-881001','2026-01-31','2026-01-31','purchase',  1200.00,'INR', 1200.00,'Spotify Premium',       'ENTR','Entertainment',  FALSE, 12),
+('CC-881001','2026-02-02','2026-02-02','purchase', 12000.00,'INR',12000.00,'Myntra',                'SHOP','Shopping',       FALSE,120),
+('CC-881001','2026-02-05','2026-02-05','purchase',  2100.00,'INR', 2100.00,'Dominos Pizza',         'FOOD','Food & Dining',  FALSE, 42),
+('CC-881001','2026-02-08','2026-02-08','purchase',  3500.00,'INR', 3500.00,'BESCOM Electricity',    'UTIL','Utilities',      FALSE, 35),
+('CC-881001','2026-02-10','2026-02-10','purchase', 28000.00,'INR',28000.00,'IRCTC Train Tickets',   'TRVL','Travel',         FALSE,560),
+('CC-881001','2026-02-12','2026-02-12','purchase',  6700.00,'INR', 6700.00,'Reliance Digital',      'ELEC','Electronics',    FALSE, 67),
+('CC-881001','2026-02-14','2026-02-14','purchase',  3800.00,'INR', 3800.00,'Zomato',                'FOOD','Food & Dining',  FALSE, 76),
+('CC-881001','2026-02-15','2026-02-17','purchase',  9800.00,'INR', 9800.00,'Decathlon',             'SHOP','Shopping',       FALSE, 98),
+('CC-881001','2026-02-18','2026-02-18','purchase',  1800.00,'INR', 1800.00,'Netflix',               'ENTR','Entertainment',  FALSE, 18),
+('CC-881001','2026-02-20','2026-02-20','purchase',  4200.00,'INR', 4200.00,'Apollo Pharmacy',       'HLTH','Health & Medical',FALSE, 42),
+('CC-881001','2026-02-22','2026-02-22','purchase', 15000.00,'INR',15000.00,'MakeMyTrip Hotels',     'TRVL','Travel',         FALSE,300),
+('CC-881001','2026-02-24','2026-02-24','payment',  40000.00,'INR',40000.00,'NorthStar Payment',     'OTHR','Payment',        FALSE,  0),
+('CC-881001','2026-02-25','2026-02-25','fee',          999.00,'INR',  999.00,'NorthStar Annual Fee',  'OTHR','Fee',            FALSE,  0);
 
-    -- Home & Kitchen (category 4)
-    ('Stainless Steel Cookware Set 10-piece',  4, 189.99,  70,  'Tri-ply stainless steel, oven-safe to 260 °C', TRUE),
-    ('Bamboo Cutting Board Set',              4,  34.99, 150,  'Set of 3 boards with juice grooves and non-slip feet', TRUE),
-    ('Air Purifier HEPA H13',                 4, 129.99,  55,  'Covers up to 40 m², removes 99.97 % of airborne particles', TRUE),
+-- March 2026 billing cycle (Feb 26 – Mar 25) — PRIMARY DEMO MONTH
+INSERT INTO card_transactions (card_id, txn_date, posting_date, txn_type, amount, original_currency, original_amount, merchant_name, category_code, category_name, is_international, reward_pts_earned) VALUES
+('CC-881001','2026-02-27','2026-02-27','purchase',  3200.00,'INR', 3200.00,'Barbeque Nation',        'FOOD','Food & Dining',  FALSE,  64),
+('CC-881001','2026-03-02','2026-03-02','purchase', 12000.00,'INR',12000.00,'Myntra',                 'SHOP','Shopping',       FALSE, 120),
+('CC-881001','2026-03-05','2026-03-05','purchase',  8500.00,'INR', 8500.00,'Marriott Hotels Pune',   'TRVL','Travel',         FALSE, 170),
+('CC-881001','2026-03-08','2026-03-08','purchase',  4100.00,'INR', 4100.00,'Swiggy',                 'FOOD','Food & Dining',  FALSE,  82),
+('CC-881001','2026-03-10','2026-03-10','purchase',  2100.00,'INR', 2100.00,'BookMyShow',             'ENTR','Entertainment',  FALSE,  21),
+('CC-881001','2026-03-12','2026-03-12','purchase', 18500.00,'INR',18500.00,'Amazon UK',              'SHOP','Shopping',       TRUE,  185),
+('CC-881001','2026-03-14','2026-03-14','purchase', 32400.00,'SGD',  480.00,'Singapore Airlines',     'TRVL','Travel',         TRUE,  648),
+('CC-881001','2026-03-15','2026-03-15','purchase',  3500.00,'INR', 3500.00,'BESCOM Electricity',     'UTIL','Utilities',      FALSE,  35),
+('CC-881001','2026-03-17','2026-03-17','purchase',  1500.00,'INR', 1500.00,'Spotify Premium',        'ENTR','Entertainment',  FALSE,  15),
+('CC-881001','2026-03-18','2026-03-18','purchase',  9800.00,'INR', 9800.00,'Tanishq Jewellery',      'JEWL','Jewellery',      FALSE,  98),
+('CC-881001','2026-03-20','2026-03-20','purchase',  4500.00,'INR', 4500.00,'BigBasket',              'GROC','Groceries',      FALSE,  45),
+('CC-881001','2026-03-22','2026-03-22','refund',   -2000.00,'INR',-2000.00,'Amazon UK Refund',       'SHOP','Shopping',       TRUE,   -20),
+('CC-881001','2026-03-23','2026-03-23','purchase',  6700.00,'INR', 6700.00,'Croma Electronics',      'ELEC','Electronics',    FALSE,  67),
+('CC-881001','2026-03-24','2026-03-24','fee',         340.00,'INR',  340.00,'Forex Markup Fee',       'OTHR','Fee',            FALSE,    0),
+('CC-881001','2026-03-25','2026-03-25','fee',          87.50,'INR',   87.50,'GST on Forex Fee',       'OTHR','Fee',            FALSE,    0);
 
-    -- Sports & Outdoors (category 5)
-    ('Adjustable Dumbbell Set 5–52.5 lb',     5, 299.99,  30,  '15 weight settings replace 15 pairs of dumbbells', TRUE),
-    ('Hiking Backpack 50 L',                  5,  89.99,  90,  'Waterproof, with integrated rain cover and hip-belt pockets', TRUE),
-    ('Yoga Mat Premium 6 mm',                 5,  39.99, 220,  'Non-slip, eco-friendly TPE foam yoga mat', TRUE),
 
-    -- Toys & Games (category 6)
-    ('Classic Chess Set Wooden',              6,  59.99, 100,  'Hand-carved pieces with roll-up board, box included', TRUE),
-    ('LEGO Technic Bugatti Chiron',           6, 369.99,  20,  '3 599-piece model, 1:8 scale, with working W16 engine', TRUE),
-    ('Card Game — Exploding Kittens',         6,  19.99, 350,  'A highly strategic kitty-powered card game', TRUE),
+-- April 2026 partial month
+INSERT INTO card_transactions (card_id, txn_date, posting_date, txn_type, amount, original_currency, original_amount, merchant_name, category_code, category_name, is_international, reward_pts_earned) VALUES
+('CC-881001','2026-03-28','2026-03-28','payment',  55000.00,'INR',55000.00,'NorthStar UPI Payment',  'OTHR','Payment',        FALSE,   0),
+('CC-881001','2026-04-01','2026-04-01','purchase',  3100.00,'INR', 3100.00,'Zomato',                 'FOOD','Food & Dining',  FALSE,  62),
+('CC-881001','2026-04-03','2026-04-03','purchase',  6700.00,'INR', 6700.00,'Reliance Digital',       'ELEC','Electronics',    FALSE,  67),
+('CC-881001','2026-04-07','2026-04-07','purchase',  2100.00,'INR', 2100.00,'Dominos Pizza',          'FOOD','Food & Dining',  FALSE,  42),
+('CC-881001','2026-04-10','2026-04-10','purchase', 18000.00,'INR',18000.00,'IRCTC Tatkal Tickets',   'TRVL','Travel',         FALSE, 360);
 
-    -- Health & Beauty (category 7)
-    ('Vitamin D3 + K2 Supplement 90 caps',   7,  18.99, 400,  '2000 IU D3 + 100 mcg K2 MK-7 per capsule', TRUE),
-    ('Electric Toothbrush Sonic',             7,  49.99, 130,  '62 000 strokes/min, 3 modes, 30-day battery', TRUE),
-    ('Natural Face Serum Vitamin C 30 ml',    7,  28.99, 180,  '20 % L-ascorbic acid + hyaluronic acid', TRUE),
-    ('Resistance Band Set 5-loop',            5,  21.99, 310,  'Five resistance levels (5–50 lb), latex-free', TRUE),
-    ('Smart Water Bottle 500 ml',             1,  34.99,  75,  'Tracks hydration via Bluetooth app, keeps cold 24 h / hot 12 h', FALSE);
+-- ─────────────────────────────────────────────────────────────
+-- 5. TRANSACTIONS — OTHER CARDS (supporting data)
+-- ─────────────────────────────────────────────────────────────
+INSERT INTO card_transactions (card_id, txn_date, posting_date, txn_type, amount, original_currency, merchant_name, category_code, category_name, is_international, reward_pts_earned) VALUES
+-- CC-882001 Sarah Thompson / Platinum
+('CC-882001','2026-03-03','2026-03-03','purchase',  5200.00,'INR','Spencer Retail',         'GROC','Groceries',      FALSE,  156),
+('CC-882001','2026-03-07','2026-03-07','purchase', 15000.00,'INR','Flipkart',               'SHOP','Shopping',       FALSE,  450),
+('CC-882001','2026-03-12','2026-03-12','purchase', 42000.00,'USD','Hilton New York',        'TRVL','Travel',         TRUE,  2520),
+('CC-882001','2026-03-15','2026-03-15','purchase',  4800.00,'INR','Zomato Gold Dining',     'FOOD','Food & Dining',  FALSE,  288),
+('CC-882001','2026-03-20','2026-03-20','purchase',  9800.00,'INR','Nykaa',                  'SHOP','Shopping',       FALSE,  294),
+('CC-882001','2026-04-01','2026-04-01','payment',  80000.00,'INR','NorthStar NACH Debit',   'OTHR','Payment',        FALSE,    0),
+-- CC-883001 Daniel Foster / Classic
+('CC-883001','2026-03-05','2026-03-05','purchase',  2500.00,'INR','D-Mart',                 'GROC','Groceries',      FALSE,   25),
+('CC-883001','2026-03-10','2026-03-10','purchase',  4200.00,'INR','Amazon India',           'SHOP','Shopping',       FALSE,   42),
+('CC-883001','2026-03-15','2026-03-15','purchase',  1800.00,'INR','BookMyShow',             'ENTR','Entertainment',  FALSE,   18),
+('CC-883001','2026-03-20','2026-03-20','purchase',  3200.00,'INR','Swiggy',                 'FOOD','Food & Dining',  FALSE,   32),
+('CC-883001','2026-03-25','2026-03-25','purchase',  3500.00,'INR','Airtel Recharge',        'UTIL','Utilities',      FALSE,   35),
+('CC-883001','2026-04-02','2026-04-02','payment',  15000.00,'INR','NorthStar UPI',          'OTHR','Payment',        FALSE,    0);
 
--- ── Orders (12) ───────────────────────────────────────────────────────────────
-INSERT INTO orders (customer_name, customer_email, total_amount, status, created_at) VALUES
-    ('Alice Johnson',   'alice@example.com',   389.97, 'delivered',  NOW() - INTERVAL '30 days'),
-    ('Bob Smith',       'bob@example.com',     239.98, 'delivered',  NOW() - INTERVAL '25 days'),
-    ('Carol Williams',  'carol@example.com',    74.98, 'shipped',    NOW() - INTERVAL '10 days'),
-    ('David Brown',     'david@example.com',   639.98, 'confirmed',  NOW() - INTERVAL '5 days'),
-    ('Eva Martinez',    'eva@example.com',     104.97, 'pending',    NOW() - INTERVAL '2 days'),
-    ('Frank Lee',       'frank@example.com',   479.97, 'delivered',  NOW() - INTERVAL '45 days'),
-    ('Grace Kim',       'grace@example.com',   189.99, 'cancelled',  NOW() - INTERVAL '15 days'),
-    ('Henry Davis',     'henry@example.com',   159.98, 'shipped',    NOW() - INTERVAL '7 days'),
-    ('Isabella Garcia', 'isabella@example.com', 54.98, 'pending',    NOW() - INTERVAL '1 day'),
-    ('Jack Wilson',     'jack@example.com',    599.97, 'confirmed',  NOW() - INTERVAL '3 days'),
-    ('Karen Thomas',    'karen@example.com',    62.97, 'delivered',  NOW() - INTERVAL '60 days'),
-    ('Liam Anderson',   'liam@example.com',    369.99, 'shipped',    NOW() - INTERVAL '6 days');
+-- ─────────────────────────────────────────────────────────────
+-- 6. REWARD TRANSACTIONS
+-- ─────────────────────────────────────────────────────────────
+INSERT INTO reward_transactions (card_id, txn_date, points_earned, points_redeemed, points_expired, description, expiry_date) VALUES
+('CC-881001', '2026-02-25', 1332,    0,    0, 'Points earned - Feb billing cycle', '2027-12-31'),
+('CC-881001', '2026-03-10',    0, 1000,    0, 'Redemption - Swiggy voucher ₹250',  '2027-12-31'),
+('CC-881001', '2026-03-25', 1550,    0,    0, 'Points earned - Mar billing cycle', '2027-12-31'),
+('CC-882001', '2026-03-25', 3708,    0,    0, 'Points earned - Mar billing cycle', '2027-12-31'),
+('CC-883001', '2026-03-20',  152,    0,    0, 'Points earned - Mar billing cycle', '2027-12-31');
 
--- ── Order items ───────────────────────────────────────────────────────────────
--- Using sub-selects to avoid hard-coded IDs.
+-- ─────────────────────────────────────────────────────────────
+-- 7. BILLING STATEMENTS
+-- ─────────────────────────────────────────────────────────────
+INSERT INTO billing_statements (card_id, billing_month, start_date, end_date, due_date, opening_balance, total_purchases, total_payments, total_fees, total_refunds, closing_balance, min_amount_due, reward_pts_earned) VALUES
+('CC-881001','2026-02','2026-01-26','2026-02-25','2026-03-15',  15000, 96800, 40000, 999,     0,  72799, 3640, 1332),
+('CC-881001','2026-03','2026-02-26','2026-03-25','2026-04-15',  72799,105400, 55000, 427.50,2000,121627, 6081, 1550),
+('CC-882001','2026-03','2026-02-26','2026-03-25','2026-04-15',  20000, 76800, 80000,   0,      0,  16800,  840, 3708),
+('CC-883001','2026-03','2026-02-21','2026-03-20','2026-04-10',   5000, 15200, 15000,   0,      0,   5200,  260,  152);
 
-DO $$
-DECLARE
-    -- Product IDs looked up by name
-    p_headphones     INT := (SELECT id FROM products WHERE name = 'Wireless Noise-Cancelling Headphones');
-    p_kb             INT := (SELECT id FROM products WHERE name = 'Mechanical Keyboard — TKL');
-    p_monitor        INT := (SELECT id FROM products WHERE name = '4K USB-C Monitor 27"');
-    p_ssd            INT := (SELECT id FROM products WHERE name = 'Portable SSD 1 TB');
-    p_clean_code     INT := (SELECT id FROM products WHERE name = 'Clean Code by Robert C. Martin');
-    p_ddia           INT := (SELECT id FROM products WHERE name = 'Designing Data-Intensive Applications');
-    p_pragmatic      INT := (SELECT id FROM products WHERE name = 'The Pragmatic Programmer');
-    p_chinos         INT := (SELECT id FROM products WHERE name = 'Men''s Slim-Fit Chinos');
-    p_jacket         INT := (SELECT id FROM products WHERE name = 'Women''s Running Jacket');
-    p_tshirt         INT := (SELECT id FROM products WHERE name = 'Unisex Organic Cotton T-Shirt');
-    p_cookware       INT := (SELECT id FROM products WHERE name = 'Stainless Steel Cookware Set 10-piece');
-    p_dumbbells      INT := (SELECT id FROM products WHERE name = 'Adjustable Dumbbell Set 5–52.5 lb');
-    p_backpack       INT := (SELECT id FROM products WHERE name = 'Hiking Backpack 50 L');
-    p_yoga           INT := (SELECT id FROM products WHERE name = 'Yoga Mat Premium 6 mm');
-    p_chess          INT := (SELECT id FROM products WHERE name = 'Classic Chess Set Wooden');
-    p_lego           INT := (SELECT id FROM products WHERE name = 'LEGO Technic Bugatti Chiron');
-    p_cards          INT := (SELECT id FROM products WHERE name = 'Card Game — Exploding Kittens');
-    p_vitamin        INT := (SELECT id FROM products WHERE name = 'Vitamin D3 + K2 Supplement 90 caps');
-    p_toothbrush     INT := (SELECT id FROM products WHERE name = 'Electric Toothbrush Sonic');
-    p_serum          INT := (SELECT id FROM products WHERE name = 'Natural Face Serum Vitamin C 30 ml');
-    p_resistance     INT := (SELECT id FROM products WHERE name = 'Resistance Band Set 5-loop');
-    p_smart_hub      INT := (SELECT id FROM products WHERE name = 'Smart Home Hub');
+-- ─────────────────────────────────────────────────────────────
+-- 8. USEFUL SAMPLE QUERIES (for NL-to-SQL node testing)
+-- ─────────────────────────────────────────────────────────────
 
-    -- Order IDs (inserted in sequence — rely on serial)
-    o1 INT := (SELECT id FROM orders WHERE customer_email = 'alice@example.com');
-    o2 INT := (SELECT id FROM orders WHERE customer_email = 'bob@example.com');
-    o3 INT := (SELECT id FROM orders WHERE customer_email = 'carol@example.com');
-    o4 INT := (SELECT id FROM orders WHERE customer_email = 'david@example.com');
-    o5 INT := (SELECT id FROM orders WHERE customer_email = 'eva@example.com');
-    o6 INT := (SELECT id FROM orders WHERE customer_email = 'frank@example.com');
-    o7 INT := (SELECT id FROM orders WHERE customer_email = 'grace@example.com');
-    o8 INT := (SELECT id FROM orders WHERE customer_email = 'henry@example.com');
-    o9 INT := (SELECT id FROM orders WHERE customer_email = 'isabella@example.com');
-    o10 INT := (SELECT id FROM orders WHERE customer_email = 'jack@example.com');
-    o11 INT := (SELECT id FROM orders WHERE customer_email = 'karen@example.com');
-    o12 INT := (SELECT id FROM orders WHERE customer_email = 'liam@example.com');
-BEGIN
-    INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES
-        -- Alice: headphones + monitor + clean_code
-        (o1, p_headphones, 1, 149.99),
-        (o1, p_monitor,    1, 329.99),  -- total would be slightly off; orders.total_amount is pre-set
-        (o1, p_clean_code, 1,  34.99),
+-- Q1: Monthly spend summary by category for CC-881001 (March 2026)
+-- SELECT category_name,
+--        COUNT(*) FILTER (WHERE txn_type = 'purchase') AS txn_count,
+--        SUM(amount) FILTER (WHERE txn_type = 'purchase') AS total_spend,
+--        SUM(reward_pts_earned) AS points_earned
+-- FROM card_transactions
+-- WHERE card_id = 'CC-881001'
+--   AND txn_date BETWEEN '2026-02-26' AND '2026-03-25'
+--   AND txn_type IN ('purchase')
+-- GROUP BY category_name ORDER BY total_spend DESC;
 
-        -- Bob: keyboard + ssd
-        (o2, p_kb,  1,  89.99),
-        (o2, p_ssd, 1,  99.99),
-        (o2, p_ddia, 1,  44.99),
+-- Q2: Top 5 merchants by spend for CC-881001 in March billing cycle
+-- SELECT merchant_name, SUM(amount) AS total, COUNT(*) AS txns
+-- FROM card_transactions
+-- WHERE card_id = 'CC-881001'
+--   AND txn_date BETWEEN '2026-02-26' AND '2026-03-25'
+--   AND txn_type = 'purchase'
+-- GROUP BY merchant_name ORDER BY total DESC LIMIT 5;
 
-        -- Carol: jacket + tshirt
-        (o3, p_jacket, 1, 79.99),
-        (o3, p_tshirt, 1, 24.99),
+-- Q3: International transactions for CC-881001
+-- SELECT txn_date, merchant_name, amount, original_currency, original_amount, category_name
+-- FROM card_transactions
+-- WHERE card_id = 'CC-881001' AND is_international = TRUE
+-- ORDER BY txn_date DESC;
 
-        -- David: monitor + dumbbells (big order)
-        (o4, p_monitor,   1, 329.99),
-        (o4, p_dumbbells, 1, 299.99),
+-- Q4: Reward points balance for a customer
+-- SELECT cc.card_id, cc.card_variant, cc.reward_points,
+--        cc.reward_points * 0.25 AS redemption_value_inr
+-- FROM credit_cards cc
+-- JOIN customers c ON cc.customer_id = c.customer_id
+-- WHERE c.customer_id = 'C-1001';
 
-        -- Eva: clean_code + pragmatic + vitamin
-        (o5, p_clean_code, 1, 34.99),
-        (o5, p_pragmatic,  1, 39.99),
-        (o5, p_vitamin,    1, 18.99),
+-- Q5: Year-to-date spend vs fee waiver threshold for CC-883001
+-- SELECT cc.card_id, cc.card_variant,
+--        SUM(ct.amount) AS ytd_spend,
+--        CASE cc.card_variant
+--            WHEN 'NorthStar Classic'   THEN 50000
+--            WHEN 'NorthStar Gold'      THEN 100000
+--            WHEN 'NorthStar Platinum'  THEN 300000
+--            WHEN 'NorthStar Signature' THEN 700000
+--        END AS fee_waiver_target,
+--        CASE cc.card_variant
+--            WHEN 'NorthStar Classic'   THEN GREATEST(0, 50000  - SUM(ct.amount))
+--            WHEN 'NorthStar Gold'      THEN GREATEST(0, 100000 - SUM(ct.amount))
+--            WHEN 'NorthStar Platinum'  THEN GREATEST(0, 300000 - SUM(ct.amount))
+--            WHEN 'NorthStar Signature' THEN GREATEST(0, 700000 - SUM(ct.amount))
+--        END AS remaining_to_waiver
+-- FROM credit_cards cc
+-- JOIN card_transactions ct ON cc.card_id = ct.card_id
+-- WHERE cc.card_id = 'CC-883001'
+--   AND ct.txn_type = 'purchase'
+--   AND EXTRACT(YEAR FROM ct.txn_date) = 2026
+-- GROUP BY cc.card_id, cc.card_variant;
 
-        -- Frank: headphones + backpack + chess
-        (o6, p_headphones, 1, 149.99),
-        (o6, p_backpack,   1,  89.99),
-        (o6, p_chess,      1,  59.99),
-        (o6, p_yoga,       2,  39.99),
-
-        -- Grace: cookware
-        (o7, p_cookware, 1, 189.99),
-
-        -- Henry: chinos + jacket
-        (o8, p_chinos, 1,  49.99),
-        (o8, p_jacket, 1,  79.99),
-        (o8, p_cards,  1,  19.99),
-
-        -- Isabella: vitamin + serum
-        (o9, p_vitamin, 1, 18.99),
-        (o9, p_serum,   1, 28.99),
-
-        -- Jack: ssd + lego + smart_hub
-        (o10, p_ssd,       1,  99.99),
-        (o10, p_lego,      1, 369.99),
-        (o10, p_smart_hub, 1,  59.99),
-        (o10, p_toothbrush,1,  49.99),
-
-        -- Karen: cards + tshirt + resistance
-        (o11, p_cards,      1, 19.99),
-        (o11, p_tshirt,     1, 24.99),
-        (o11, p_resistance, 1, 21.99),
-
-        -- Liam: lego
-        (o12, p_lego, 1, 369.99);
-END;
-$$;
-
--- ── Step 5: Grant read-only privileges ────────────────────────────────────────
-
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO rag_readonly;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO rag_readonly;
-
--- ── Step 6: Enforce read-only at session level for safety ────────────────────
-
-ALTER USER rag_readonly SET default_transaction_read_only = on;
-
--- ── Verification ──────────────────────────────────────────────────────────────
-
-SELECT 'categories'  AS tbl, COUNT(*) AS rows FROM categories
-UNION ALL
-SELECT 'products',   COUNT(*) FROM products
-UNION ALL
-SELECT 'orders',     COUNT(*) FROM orders
-UNION ALL
-SELECT 'order_items',COUNT(*) FROM order_items;
+-- Q6: Month-over-month spend comparison for CC-881001
+-- SELECT
+--   TO_CHAR(txn_date, 'YYYY-MM') AS month,
+--   SUM(amount) FILTER (WHERE txn_type = 'purchase') AS total_purchases,
+--   COUNT(*) FILTER (WHERE txn_type = 'purchase') AS txn_count
+-- FROM card_transactions
+-- WHERE card_id = 'CC-881001'
+-- GROUP BY TO_CHAR(txn_date, 'YYYY-MM')
+-- ORDER BY month;

@@ -9,6 +9,7 @@ dependencies = [
     "docling>=2.84.0",
     "fastapi>=0.135.3",
     "google-genai>=1.70.0",
+    "google-generativeai>=0.8.6",
     "langchain>=1.2.15",
     "langchain-community>=0.4.1",
     "langchain-google-genai>=4.2.1",

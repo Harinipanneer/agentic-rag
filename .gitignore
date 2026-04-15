@@ -10,5 +10,3 @@ wheels/
 .venv
 .env
 
-src/api/v1/agents/agent1.py
-agent1.py

@@ -47,20 +47,28 @@ _embeddings_model = GoogleGenerativeAIEmbeddings(
 # )
 
 def get_sql_database() -> SQLDatabase:
-    """Return a LangChain SQLDatabase connected to the agentic_rag_db (read-only).
+    """
+    Return a LangChain SQLDatabase connected to the NorthStar Bank DB.
 
-    Uses the rag_readonly role from sql/seed.sql — SELECT privileges only.
-    Connection string is read from AGENTIC_RAG_DB_URL in the environment.
+    Updated for Capstone Project BFSI-CC-003.
+    Includes tables for customers, cards, transactions, and billing.
     """
     db_url = os.getenv("AGENTIC_RAG_DB_URL")
     if not db_url:
         raise ValueError("AGENTIC_RAG_DB_URL is not set. Check your .env file.")
+    
     return SQLDatabase.from_uri(
         db_url,
-        include_tables=["products", "categories", "orders", "order_items"],
+        # Updated table list for the NorthStar Bank schema
+        include_tables=[
+            "customers", 
+            "credit_cards", 
+            "card_transactions", 
+            "reward_transactions", 
+            "billing_statements"
+        ],
         sample_rows_in_table_info=2,
     )
-
 
 
 
@@ -131,35 +139,7 @@ def upsert_document(filename: str, source_path: str) -> str:
 # ---------------------------------------------------------------------------
 # Chunk storage
 # ---------------------------------------------------------------------------
-
 def store_chunks(chunks: list[dict], doc_id: str) -> int:
-    """Embed each chunk and insert it into the multimodal_chunks table.
-
-    Args:
-        chunks:  List of dicts produced by parse_document() / ingestion.py.
-                 Each dict must have: content (str), content_type (str),
-                 metadata (dict with page_number, section, source_file,
-                 element_type, position, image_base64).
-        doc_id:  UUID string of the parent document (from upsert_document).
-
-    Returns:
-        Number of rows inserted.
-
-    Embedding strategy:
-        Texts are embedded in batches of _EMBED_BATCH_SIZE to minimise
-        API round-trips. embed_documents() takes a list and returns a
-        list of 768-dimensional float vectors in the same order.
-
-    Vector storage:
-        pgvector accepts the '[f1,f2,…]' string literal when cast with
-        ::vector. We build that string directly to avoid needing the
-        separate pgvector Python package.
-
-    Image storage:
-        image_base64 from metadata is decoded to raw bytes and stored in
-        the BYTEA column. The JSONB metadata column does NOT duplicate it,
-        keeping metadata lean.
-    """
     print(f"\n Storing {len(chunks)} chunks...")
     if not chunks:
         return 0
@@ -167,90 +147,107 @@ def store_chunks(chunks: list[dict], doc_id: str) -> int:
     contents = [c["content"] for c in chunks]
     print(" Generating embeddings...")
 
-    # ── Batch embed all chunks ────────────────────────────────────────────────
-    all_embeddings: list[list[float]] = []
-    for i in range(0, len(contents), _EMBED_BATCH_SIZE):
-        batch = contents[i : i + _EMBED_BATCH_SIZE]
-        all_embeddings.extend(_embeddings_model.embed_documents(batch)) 
-        
-    print(" Embeddings ready") # Issue 8
+    # 🔥 FIX: Use embed_query instead of embed_documents
+    all_embeddings = []
+    for idx, text in enumerate(contents):
+        try:
+            emb = _embeddings_model.embed_query(text)
+            all_embeddings.append(emb)
+        except Exception as e:
+            print(f"❌ Embedding failed for chunk {idx}: {e}")
+            all_embeddings.append(None)
 
-    # ── Insert rows ───────────────────────────────────────────────────────────
-    # Issue 10 fix: Only store fields in JSONB that don't already have a
-    # dedicated column — the rest are redundant and waste storage.
+    print(f" Embeddings ready: {len([e for e in all_embeddings if e is not None])}")
+
     _DEDICATED_COLUMNS = {
         "content_type", "element_type", "section",
         "page_number", "source_file", "position", "image_base64",
     }
 
     rows_inserted = 0
+
     with get_db_conn() as conn:
         with conn.cursor() as cur:
-            # Issue 4 fix: Delete stale chunks before re-inserting so that
-            # re-ingesting the same document does not create duplicates.
+
+            # Delete old chunks
             cur.execute(
                 "DELETE FROM multimodal_chunks WHERE doc_id = %s::uuid",
                 (doc_id,),
             )
+            conn.commit()
 
-            for chunk, embedding in zip(chunks, all_embeddings):
-                meta = chunk["metadata"]
+            for idx, (chunk, embedding) in enumerate(zip(chunks, all_embeddings)):
 
-                # Issue 18 fix: Save image bytes to the filesystem and store
-                # only the file path in the DB. This avoids bloating PostgreSQL
-                # with large BYTEA columns that slow down vacuuming and queries.
-                img_b64 = meta.get("image_base64")
-                image_path: str | None = None
-                mime_type = "image/png" if img_b64 else None
-                if img_b64:
-                    image_bytes = base64.b64decode(img_b64)
-                    img_dir = pathlib.Path("data/images")
-                    img_dir.mkdir(parents=True, exist_ok=True)
-                    img_hash = hashlib.sha256(image_bytes).hexdigest()[:16]
-                    img_file = img_dir / f"{doc_id}_{img_hash}.png"
-                    img_file.write_bytes(image_bytes)
-                    image_path = str(img_file)
+                # Skip failed embeddings
+                if embedding is None:
+                    continue
 
-                # pgvector vector literal: '[0.1, 0.2, …]'
-                embedding_str = "[" + ",".join(str(v) for v in embedding) + "]"
+                try:
+                    meta = chunk.get("metadata", {})
 
-                # Exclude fields that already have dedicated columns from JSONB.
-                clean_meta = {k: v for k, v in meta.items() if k not in _DEDICATED_COLUMNS}
+                    img_b64 = meta.get("image_base64")
+                    image_path = None
+                    mime_type = "image/png" if img_b64 else None
 
-                cur.execute(
-                    """
-                    INSERT INTO multimodal_chunks (
-                        doc_id, chunk_type, element_type, content,
-                        image_path, mime_type,
-                        page_number, section, source_file,
-                        position, embedding, metadata
-                    ) VALUES (
-                        %s::uuid, %s, %s, %s,
-                        %s, %s,
-                        %s, %s, %s,
-                        %s::jsonb, %s::vector, %s::jsonb
+                    if img_b64:
+                        image_bytes = base64.b64decode(img_b64)
+                        img_dir = pathlib.Path("data/images")
+                        img_dir.mkdir(parents=True, exist_ok=True)
+
+                        img_hash = hashlib.sha256(image_bytes).hexdigest()[:16]
+                        img_file = img_dir / f"{doc_id}_{img_hash}.png"
+                        img_file.write_bytes(image_bytes)
+
+                        image_path = str(img_file)
+
+                    embedding_str = "[" + ",".join(str(v) for v in embedding) + "]"
+
+                    clean_meta = {
+                        k: v for k, v in meta.items()
+                        if k not in _DEDICATED_COLUMNS
+                    }
+
+                    cur.execute(
+                        """
+                        INSERT INTO multimodal_chunks (
+                            doc_id, chunk_type, element_type, content,
+                            image_path, mime_type,
+                            page_number, section, source_file,
+                            position, embedding, metadata
+                        )
+                        VALUES (
+                            %s::uuid, %s, %s, %s,
+                            %s, %s,
+                            %s, %s, %s,
+                            %s::jsonb, %s::vector, %s::jsonb
+                        )
+                        """,
+                        (
+                            doc_id,
+                            chunk.get("content_type"),
+                            meta.get("element_type"),
+                            chunk.get("content"),
+                            image_path,
+                            mime_type,
+                            meta.get("page_number"),
+                            meta.get("section"),
+                            meta.get("source_file"),
+                            json.dumps(meta.get("position")) if meta.get("position") else None,
+                            embedding_str,
+                            json.dumps(clean_meta),
+                        ),
                     )
-                    """,
-                    (
-                        doc_id,
-                        chunk["content_type"],       # chunk_type column
-                        meta.get("element_type"),    # raw Docling label
-                        chunk["content"],            # text / markdown / caption
-                        image_path,                  # filesystem path (None for text/table)
-                        mime_type,
-                        meta.get("page_number"),
-                        meta.get("section"),
-                        meta.get("source_file"),
-                        json.dumps(meta.get("position")) if meta.get("position") else None,
-                        embedding_str,               # ::vector cast
-                        json.dumps(clean_meta),      # JSONB catch-all
-                    ),
-                )
-                rows_inserted += 1
+
+                    rows_inserted += 1
+
+                except Exception as e:
+                    print(f"❌ Failed inserting chunk {idx}: {e}")
+                    continue
+
         conn.commit()
 
+    print(f"\n Inserted {rows_inserted}/{len(chunks)} chunks")
     return rows_inserted
-
 
 # ---------------------------------------------------------------------------
 # Similarity search
