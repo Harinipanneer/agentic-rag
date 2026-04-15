@@ -97,19 +97,19 @@ def guardrail(query: str):
 def vector_search_tool(query: str) -> list:
     """Use for semantic / natural language queries."""
     print(f" [TOOL CALL] Executing: Vector Search | Query: {query}")
-    return vector_search(query, k=20)
+    return vector_search(query, k=25)
 
 @tool
 def fts_search_tool(query: str) -> list:
     """Use for keyword / exact match queries"""
     print(f"  [TOOL CALL] Executing: Full-Text Search | Query: {query}")
-    return fts_search(query, k=20)
+    return fts_search(query, k=25)
 
 @tool
 def hybrid_search_tool(query: str) -> list:
     """Use when query has both keyword + semantic meaning"""
     print(f"  [TOOL CALL] Executing: Hybrid Search | Query: {query}")
-    return hybrid_search(query, k=20)
+    return hybrid_search(query, k=25)
 
 tools = [vector_search_tool, fts_search_tool, hybrid_search_tool]
 llm_with_tools = llm.bind_tools(tools)
@@ -277,7 +277,7 @@ def rerank_node(state: RAGState) -> RAGState:
     print(f" [COHERE RERANKING] Processing {len(docs)} chunks for query: '{state['query']}'")
     co = cohere.ClientV2(api_key=os.getenv("COHERE_API_KEY"))
     doc_contents = [d.get("content", "") for d in docs]
-    top_k = min(10, len(doc_contents))
+    top_k = min(15, len(doc_contents))
     
     try:
         res = co.rerank(model="rerank-english-v3.0", query=state["query"], documents=doc_contents, top_n=top_k)
@@ -339,14 +339,18 @@ def hybrid_node(state: RAGState) -> RAGState:
          State clearly how much more they need to spend or if they have already met the goal.
         1. REWARD POINTS: 1 point = ₹0.25 redemption value.
         2. FEE WAIVERS: Mention the target spend if asked about waivers.
-        3. NATURAL RESPONSE: Don't say 'Based on the context'. Be professional.
+        3. NATURAL RESPONSE: Don't say 'Based on the context'. 'Don't add extra words or sentences'.
+         "Answer without any extra phrases like "happy to help". Be professional.
         4. NO HTML: DO NOT use HTML tags like <br> or <p>.
         5. SPACING: Use a single empty line between paragraphs.
+        Ignore mock scenarios and mock datas like CC-883001. Use only database data
         
         CITE SOURCES STRICTLY:
         - Use 'page_no' ONLY for the page number found in the tags.
         - Use 'document_name' ONLY for the filename found in the tags.
-        - For the 'citation' field, YOU MUST ONLY EXTRACT the exact text following 'Section:' in the context tags. DO NOT summarize. DO NOT write full sentences."""),
+        
+        - For the 'citation' field, YOU MUST ONLY EXTRACT the exact text following 'Section:' in the context tags. DO NOT summarize. DO NOT write full sentences.
+         If the section has a clear title use ONLY that title for the citation field. Do not include the table data"""),
         ("human", "Context:\n{context}\n\nQuestion: {query}")
     ])
 

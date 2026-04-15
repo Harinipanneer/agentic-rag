@@ -6,18 +6,18 @@ import requests
 # ==========================================
 API_URL = "http://localhost:8000/api/v1"
 
-st.set_page_config(page_title="Agentic RAG Assistant", page_icon="", layout="wide")
+st.set_page_config(page_title="Credit Card Assistant", page_icon="", layout="wide")
 
 # ==========================================
 # SIDEBAR / TOGGLE
 # ==========================================
 st.sidebar.title("Navigation")
-app_mode = st.sidebar.radio("Select Mode", ["User Mode", "Admin Mode)"])
+app_mode = st.sidebar.radio("Select Mode", ["User Mode", "Admin Mode"])
 
 # ==========================================
 # ADMIN MODE: FILE UPLOAD
 # ==========================================
-if app_mode == "Admin ":
+if app_mode == "Admin Mode":
     st.title(" Admin: Document Ingestion")
     st.markdown("Upload multiple PDF documents to update the knowledge base.")
 
@@ -57,8 +57,8 @@ if app_mode == "Admin ":
 # USER MODE: QUERY
 # ==========================================
 elif app_mode == "User Mode":
-    st.title(" AI RAG Assistant")
-    st.markdown("Ask questions about financial data and banking policies.")
+    st.title("Credit Card Assistant")
+    st.markdown("Analyze your spending patterns and verify bank policy compliance in real-time.")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []

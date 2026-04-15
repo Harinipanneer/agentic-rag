@@ -10,7 +10,7 @@ router = APIRouter()
 
 UPLOAD_DIR = "data"
 
-@router.post("/upload")
+@router.post("/admin/upload")
 async def upload_pdfs(files: List[UploadFile] = File(...)):  # Use List[UploadFile] here
     print("\n ===== MULTI FILE UPLOAD =====")
     results = []

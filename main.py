@@ -9,7 +9,6 @@ def root():
 
 
 
-
-app.include_router(upload_router, prefix="/api/v1/admin")
+app.include_router(upload_router, prefix="/api/v1")
 
 app.include_router(query_router, prefix="/api/v1")
