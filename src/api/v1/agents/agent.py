@@ -60,7 +60,8 @@ llm = ChatGoogleGenerativeAI(
 # GUARDRAIL NODE
 
 def guardrail(query: str):
-    print(f" [GUARDRAIL CHECK] Processing Query: {query}")
+    print(f" [GUARDRAIL CHECK]")
+    print(f"Query: {query.split('[System Note')[0].strip()}")
     print("="*50)
 
     prompt = ChatPromptTemplate.from_messages([
