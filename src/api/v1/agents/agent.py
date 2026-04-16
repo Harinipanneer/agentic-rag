@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from typing import TypedDict, List, Literal, Annotated
 from dotenv import load_dotenv
 import cohere
+import base64
 
 from langgraph.graph import StateGraph, END
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -72,6 +73,7 @@ def guardrail(query: str):
         - The user's personal financial metrics, transaction counts, and card features.
         - Questions about NorthStar rewards, EMIs, fees, waivers, or billing cycles.
         - Personal finance tracking strictly related to the user's credit card spend.
+        - Requests to view images, charts, diagrams, or visual examples related to credit cards or bank policies.
 
         REJECT (Output NO) for ALL of the following:
         - AI Identity & Persona: Asking the AI about its own money, feelings, location, creator, or identity (e.g., "how much money do you have", "who are you", "what is your name").
@@ -315,6 +317,26 @@ def hybrid_node(state: RAGState) -> RAGState:
     print("--> Step 4: Final Generation")
     llm_structured = llm.with_structured_output(AIResponse)
 
+    active_image_path = None
+    
+    image_keywords = ["image", "chart", "graph", "visualize", "picture", "mockup"]
+    user_asked_for_image = any(word in state["query"].lower() for word in image_keywords)
+
+    if user_asked_for_image:
+        docs = state.get("reranked_docs", [])
+        
+        for d in docs:
+            content_lower = d.get("content", "").lower()
+            
+            # If this chunk describes an image or is labeled as an image
+            if d.get("chunk_type") == "image" or "illustration" in content_lower or "mockup" in content_lower:
+                path = d.get("image_path")
+                
+                if path:
+                    active_image_path = path 
+                    break
+        
+   
     context_parts = []
     if state.get("sql_result"):
         context_parts.append(f"--- DATABASE DATA ---\n{state['sql_result']}")
@@ -331,19 +353,29 @@ def hybrid_node(state: RAGState) -> RAGState:
         Your goal is to answer user queries by combining user spend data with NorthStar policies.
         
         RULES:
-         (CHECK FOR MISSING DATA): Look at the DATABASE DATA. If it is empty, NULL, or shows zero transactions, YOU MUST STATE: "There are no transaction records for this account." 
-         DO NOT use numbers or accounts from the DOCUMENT DATA to fill in the blanks.
+        (CHECK FOR MISSING DATA): Look at the DATABASE DATA. If it is empty, NULL, or shows zero transactions, YOU MUST STATE: "There are no transaction records for this account." 
+        DO NOT use numbers or accounts from the DOCUMENT DATA to fill in the blanks.
         STEP 1 (GET REAL DATA): Look at the DATABASE DATA to find the user's real transaction amounts or history.
         STEP 2 (GET THE RULE): Look at the DOCUMENT DATA to find the official bank rule (like the fee waiver threshold).
         STEP 3 (DO THE MATH): Calculate the difference between the user's real data and the bank rule. 
-         State clearly how much more they need to spend or if they have already met the goal.
+        State clearly how much more they need to spend or if they have already met the goal.
         1. REWARD POINTS: 1 point = ₹0.25 redemption value.
         2. FEE WAIVERS: Mention the target spend if asked about waivers.
         3. NATURAL RESPONSE: Don't say 'Based on the context'. 'Don't add extra words or sentences'.
-         "Answer without any extra phrases like "happy to help". Be professional.
+           "Answer without any extra phrases like "happy to help". Be professional.
         4. NO HTML: DO NOT use HTML tags like <br> or <p>.
         5. SPACING: Use a single empty line between paragraphs.
         Ignore mock scenarios and mock datas like CC-883001. Use only database data
+         FOCUSED ANSWERS: If the context contains multiple images, tables, or concepts, ONLY focus on the specific one requested by the user. 
+         Completely IGNORE and DO NOT describe the others.
+         Generate image if it is only asked in the query
+         IMAGE REQUESTS: If the user asks for an image/picture/mockup, your answer MUST BE EXACTLY: "Here is the requested image." 
+         DO NOT trigger image generation, plotting tools, or visual artifacts for data summaries, financial calculations, or status reports unless specifically asked.
+         IMAGE REQUESTS: If the user asks for an image/picture/mockup, your answer MUST BE EXACTLY: "Here is the requested image.
+         DO NOT describe colors, layout, text, or visual details. ZERO extra descriptions unless explicitly asked.
+         For data summaries or progress tracking, use Markdown Tables or Bullet Points.
+         If the user asks for a 'summary' or 'analysis', interpret this as a request for clear prose and structured text data only.
+         IGNORE Data Tables/Scenarios completely unless the user explicitly types the word "table".
         
         CITE SOURCES STRICTLY:
         - Use 'page_no' ONLY for the page number found in the tags.
@@ -362,6 +394,7 @@ def hybrid_node(state: RAGState) -> RAGState:
 
     response = result.model_dump()
     response["sql_query_executed"] = state.get("generated_sql")
+    response["image_path"] = active_image_path
     response["source_chunks"] = [
         f"[Page: {d.get('page_number', 'N/A')} | File: {d.get('source_file', 'N/A')}]\n{d.get('content')}" 
         for d in reranked_docs if d.get("content")
@@ -394,7 +427,7 @@ def rewrite_node(state: RAGState) -> RAGState:
         ("human", """Task: Rewrite the user query to improve document retrieval in a Credit Card Product Guide.
 
     Rules:
-    1. Do NOT just provide synonyms (e.g., 'ill' for 'sick').
+    1. Do NOT just provide synonyms.
     2. If the specific term is unlikely to be found, expand to BROADER or RELATED banking concepts.
     3. EXAMPLES:
     - If user asks about 'waiving a late fee', search for 'finance charges', 'late payment policy', and 'interest rates'.
@@ -419,6 +452,31 @@ def generate_node(state: RAGState) -> RAGState:
     print("\n[GENERATE NODE] Finalizing Response...")
     llm_structured = llm.with_structured_output(AIResponse)
 
+    # --- DEBUGGING IMAGE EXTRACTION ---
+    active_image_path = None
+    
+    image_keywords = ["image", "chart", "graph", "visualize", "picture", "mockup"]
+    user_asked_for_image = any(word in state["query"].lower() for word in image_keywords)
+
+    if user_asked_for_image:
+        print("\n[DEBUG] --- STARTING IMAGE SEARCH IN DOCS ---")
+        docs = state.get("reranked_docs", [])
+        
+        for d in docs:
+            content_lower = d.get("content", "").lower()
+            
+            # If this chunk describes an image or is labeled as an image
+            if d.get("chunk_type") == "image" or "illustration" in content_lower or "mockup" in content_lower:
+                path = d.get("image_path")
+                print(f"[DEBUG] Found Image Chunk! DB says image_path is: {path}")
+                
+                if path:
+                    active_image_path = path  # Notice we removed os.path.exists for now
+                    print(f"[DEBUG] Successfully attached path to response: {active_image_path}")
+                    break
+        print("[DEBUG] --- END IMAGE SEARCH --- \n")
+    # ----------------------------------
+
     context_parts = []
     if state.get("sql_result"):
         context_parts.append(f"--- USER TRANSACTION DATA ---\n{state['sql_result']}")
@@ -440,6 +498,16 @@ def generate_node(state: RAGState) -> RAGState:
         4. Provide a clear, natural-sounding answer using the transaction data and banking guide context provided.
         5. Ensure you handle currency and credit limit terminology appropriately for the BFSI domain.
         6. Avoid "Based on" or" provided context tells "sentences.
+        7. FOCUSED ANSWERS: If the context contains multiple images, tables, or concepts, ONLY focus on the specific one requested by the user. Completely IGNORE and DO NOT describe the others.
+        8. Generate image only if it is asked in the query. 
+         For data summaries or progress tracking, use Markdown Tables or Bullet Points.
+-        If the user asks for a 'summary' or 'analysis', interpret this as a request for clear prose and structured text data only.
+         You are a text-only assistant unless the user explicitly uses the word "image", "chart", "graph", or "visualize" in their query.
+         DO NOT trigger image generation, plotting tools, or visual artifacts for data summaries, financial calculations, or status reports unless specifically asked.
+         IMAGE REQUESTS: If the user asks for an image/picture/mockup, your answer MUST BE EXACTLY: "Here is the requested image." 
+           DO NOT describe colors, layout, text, or visual details. ZERO extra descriptions unless explicitly asked.
+           IGNORE Data Tables/Scenarios completely unless the user explicitly types the word "table".
+        
 
         CITE SOURCES STRICTLY:
         - Use 'page_no' ONLY for the page number found in the tags.
@@ -455,6 +523,7 @@ def generate_node(state: RAGState) -> RAGState:
     })
     
     response = result.model_dump()
+    response["image_path"] = active_image_path
     response["sql_query_executed"] = state.get("generated_sql")
     response["source_chunks"] = [
         f"[Page: {d.get('page_number', 'N/A')} | File: {d.get('source_file', 'N/A')}]\n{d.get('content')}" 
