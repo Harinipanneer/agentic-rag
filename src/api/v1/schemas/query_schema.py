@@ -15,6 +15,7 @@ class QueryResponse(BaseModel):
     document_name: Optional[str] = None
     sql_query_executed: Optional[str] = None
     source_chunks: Optional[List[str]] = None
+    image_path: Optional[str] = None
 
 class AIResponse(BaseModel):
     query: str
@@ -24,3 +25,4 @@ class AIResponse(BaseModel):
     document_name: str
     sql_query_executed: Optional[str] = None
     source_chunks: Optional[List[str]] = None 
+    image_path: Optional[str] = None
