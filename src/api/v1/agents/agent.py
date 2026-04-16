@@ -60,10 +60,8 @@ llm = ChatGoogleGenerativeAI(
 # GUARDRAIL NODE
 
 def guardrail(query: str):
-    print(f" [GUARDRAIL CHECK]")
-    print(f"Query: {query.split('[System Note')[0].strip()}")
-    print("="*50)
-
+    print(f"\n[GUARDRAIL CHECK]\n")
+ 
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are the strict NorthStar Bank Domain Guardrail. Output ONLY YES or NO."),
         ("human", """Your job: 
@@ -143,6 +141,12 @@ def router_node(state: RAGState) -> RAGState:
            - Intent: Applying a general rule to personal data. Needs DB (spend) + Docs (rules).
            - Examples: "Based on my spend, do I get the fee waiver?", "Did I earn 5x points on my last Zomato order?", "Calculate interest on my unpaid balance."
 
+        CRITICAL ROUTING RULES:
+        - EVERY query you receive will automatically include a "[System Note]" containing a Card ID. 
+        - DO NOT mistake the presence of this Card ID for a request for personal data. 
+        - IGNORE the Card ID when deciding the route. It is provided for backend context only.
+        - ONLY route to 'database' if the human's actual text explicitly asks for their personal transactions, limits, or account-specific history.
+
         IMPORTANT:
         Look at the CONTEXT of the pronoun, not just its presence.
         - "Tell me about the EMI purchases I couldn't understand" -> 'I' refers to needing an explanation -> 'document'
@@ -153,11 +157,13 @@ def router_node(state: RAGState) -> RAGState:
     ])
 
     decision = (prompt | structured_llm).invoke({"query": state["query"]})
+    
     print(f" [ROUTER DECISION] Route: {decision.route.upper()}")
     print(f" [ROUTER REASON] {decision.reason}")
+    clean_query = state["query"].split("[System Note")[0].strip()
     
-    return {**state, "route": decision.route}
-
+    # 3. Save the clean query back to the state
+    return {**state, "route": decision.route, "query": clean_query}
 
 
 # NL2SQL NODE
@@ -608,7 +614,7 @@ rag_app = build_graph()
 
 def run_rag_agent(query: str):
     
-    print("Agent Running")
+    print("\nAgent Running")
 
     if guardrail(query):
         print(" [SESSION END] Query blocked by guardrail.")
